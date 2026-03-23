@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Sora Desktop App"
 authors = ["you"]
 edition = "2021"
+build = "build.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
