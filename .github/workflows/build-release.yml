@@ -27,14 +27,10 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
-
       - name: Build Tauri universal app
         run: |
-          cd src-tauri
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo tauri build --target universal-apple-darwin
+          npm run tauri build -- --target universal-apple-darwin
 
       - uses: actions/upload-artifact@v4
         with:
@@ -57,13 +53,8 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
-
       - name: Build Tauri app
-        run: |
-          cd src-tauri
-          cargo tauri build
+        run: npm run tauri build
 
       - uses: actions/upload-artifact@v4
         with:
@@ -93,13 +84,8 @@ jobs:
       - run: npm ci
       - run: npm run build
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --locked
-
       - name: Build Tauri app
-        run: |
-          cd src-tauri
-          cargo tauri build
+        run: npm run tauri build
 
       - uses: actions/upload-artifact@v4
         with:
