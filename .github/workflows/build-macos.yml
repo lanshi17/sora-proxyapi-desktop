@@ -21,7 +21,7 @@ jobs:
           cache: "npm"
 
       - name: Install Rust
-        uses: dtolnay/rust-action@stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
         run: npm ci
@@ -31,14 +31,8 @@ jobs:
 
       - name: Build Tauri universal app
         run: |
-          cd src-tauri
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          cargo build --release --target universal-apple-darwin
-
-      - name: Build DMG
-        run: |
-          cd src-tauri
-          cargo tauri bundle --target universal-apple-darwin
+          npm run tauri build -- --target universal-apple-darwin
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
