@@ -6,15 +6,15 @@ authors = ["you"]
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "2.5.6", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2.5.6", features = [] }
+tauri = { version = "2", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tauri-plugin-dialog = "2.6.0"
-tauri-plugin-fs = "2.4.3"
-tauri-plugin-http = { version = "2.5.7", features = ["multipart"] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-http = { version = "2", features = ["multipart"] }
 tauri-plugin-upload = "2"
 
 [features]
