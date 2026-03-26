@@ -1,31 +1,30 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Layout, Tabs, Typography, Badge, Card, Row, Col, App as AntApp } from 'antd';
 import { settingsStore } from '../features/config/settings-store';
 import { AppSettings } from '../features/config/settings-types';
 import { GenerateWorkspace } from '../features/workspace/GenerateWorkspace';
+import { HistoryWorkspace } from '../features/workspace/HistoryWorkspace';
 import { IterateWorkspace } from '../features/workspace/IterateWorkspace';
 import { RecentJob } from '../features/workspace/recent-job-types';
+import { recentJobsStore } from '../features/workspace/recent-jobs-store';
 import { StoryboardWorkspace } from '../features/workspace/StoryboardWorkspace';
 import { GenerationParams, getDimensionsFromSize } from '../features/video-generation/generation-schema';
-import { createLinxiVideo } from '../features/video-generation/linxi-create-client';
+import { createLinxiVideoWithFiles } from '../features/video-generation/linxi-create-client';
 import { useGenerationJob } from '../features/video-generation/useGenerationJob';
 import { ImagePreview } from '../features/uploads/image-preview';
-import { uploadImages } from '../features/uploads/upload-client';
 import { resizeImageToVideoDimensions } from '../features/uploads/image-preprocess';
 import { WorkspaceMode } from './workspace-types';
 
 const { Header, Content } = Layout;
 const { Title, Text } = Typography;
 
-const PNG_CM_TOKEN = '1c17b11693cb5ec63859b091c5b9c1b2';
-const UPLOAD_ENDPOINT = 'https://img.linxi.icu/api/index.php';
-
 const App: React.FC = () => {
   const [activeMode, setActiveMode] = useState<WorkspaceMode>('generate');
   const [selectedImages, setSelectedImages] = useState<ImagePreview[]>([]);
   const [submissionError, setSubmissionError] = useState<string | null>(null);
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
-  const [recentJobs, setRecentJobs] = useState<RecentJob[]>([]);
+  const [selectedHistoryTaskId, setSelectedHistoryTaskId] = useState<string | null>(null);
+  const [recentJobs, setRecentJobs] = useState<RecentJob[]>(() => recentJobsStore.load());
   const [settings, setSettings] = useState<AppSettings>(() => settingsStore.load());
 
   const generationJob = useGenerationJob({
@@ -39,6 +38,58 @@ const App: React.FC = () => {
     setSettings(nextSettings);
   };
 
+  const handleOpenHistoryTask = (taskId: string) => {
+    setSelectedHistoryTaskId(taskId);
+    setActiveMode('history');
+  };
+
+  useEffect(() => {
+    recentJobsStore.save(recentJobs);
+  }, [recentJobs]);
+
+  useEffect(() => {
+    if (!currentTaskId) {
+      return;
+    }
+
+    const nextStatus = generationJob.status
+      ?? (generationJob.state === 'failed' || generationJob.state === 'error' || generationJob.state === 'timeout'
+        ? generationJob.state
+        : null);
+    const hasPatch = Boolean(nextStatus || generationJob.videoUrl || generationJob.error);
+    if (!hasPatch) {
+      return;
+    }
+
+    setRecentJobs((previousJobs) => {
+      const existingJob = previousJobs.find((job) => job.taskId === currentTaskId);
+      if (!existingJob) {
+        return previousJobs;
+      }
+
+      const patchedJob: RecentJob = {
+        ...existingJob,
+        status: nextStatus ?? existingJob.status,
+        videoUrl: generationJob.videoUrl ?? existingJob.videoUrl,
+        error: generationJob.error ?? existingJob.error ?? null,
+        updatedAt: Date.now()
+      };
+
+      const changed = patchedJob.status !== existingJob.status
+        || patchedJob.videoUrl !== existingJob.videoUrl
+        || patchedJob.error !== existingJob.error;
+
+      if (!changed) {
+        return previousJobs;
+      }
+
+      return [
+        patchedJob,
+        ...previousJobs.filter((job) => job.taskId !== currentTaskId)
+      ];
+    });
+  }, [currentTaskId, generationJob.state, generationJob.status, generationJob.videoUrl, generationJob.error]);
+
   const handleGenerationSubmit = async (params: GenerationParams) => {
     if (selectedImages.length === 0) {
       setSubmissionError('Select at least one image before generating.');
@@ -47,48 +98,54 @@ const App: React.FC = () => {
 
     setSubmissionError(null);
 
-    const targetDims = getDimensionsFromSize(params.size);
-    
-    const processedImages = await Promise.all(
-      selectedImages.map(async (image) => {
-        if (image.file) {
-          return {
-            ...image,
-            file: await resizeImageToVideoDimensions(image.file, targetDims)
-          };
-        }
-        return image;
-      })
-    );
+    try {
+      const targetDims = getDimensionsFromSize(params.size);
 
-    const uploadedImages = await uploadImages({
-      images: processedImages.map((image) => ({
-        path: image.path,
-        name: image.name,
-        file: image.file
-      })),
-      endpoint: UPLOAD_ENDPOINT,
-      token: PNG_CM_TOKEN
-    });
+      const processedImages = await Promise.all(
+        selectedImages.map(async (image) => {
+          if (image.file) {
+            return {
+              ...image,
+              file: await resizeImageToVideoDimensions(image.file, targetDims)
+            };
+          }
+          return image;
+        })
+      );
 
-    const linxiTask = await createLinxiVideo({
-      images: uploadedImages.map((image) => image.publicUrl),
-      generationParams: params,
-      apiKey: settings.apiKey,
-      model: settings.model
-    });
+      const linxiTask = await createLinxiVideoWithFiles({
+        files: processedImages.map((image) => (
+          image.file
+            ? image.file
+            : { path: image.path, name: image.name }
+        )),
+        generationParams: params,
+        apiKey: settings.apiKey,
+        model: settings.model
+      });
 
-    setCurrentTaskId(linxiTask.taskId);
-    setRecentJobs((previousJobs) => [
-      {
-        taskId: linxiTask.taskId,
-        prompt: params.prompt,
-        model: settings.model,
-        status: linxiTask.status,
-        createdAt: Date.now()
-      },
-      ...previousJobs.filter((job) => job.taskId !== linxiTask.taskId)
-    ]);
+      setCurrentTaskId(linxiTask.taskId);
+      setRecentJobs((previousJobs) => {
+        const existingJob = previousJobs.find((job) => job.taskId === linxiTask.taskId);
+        const now = Date.now();
+
+        return [
+          {
+            taskId: linxiTask.taskId,
+            prompt: params.prompt,
+            model: settings.model,
+            status: linxiTask.status,
+            createdAt: existingJob?.createdAt ?? now,
+            updatedAt: now,
+            videoUrl: existingJob?.videoUrl ?? null,
+            error: existingJob?.error ?? null
+          },
+          ...previousJobs.filter((job) => job.taskId !== linxiTask.taskId)
+        ];
+      });
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : 'Failed to start generation.');
+    }
   };
 
   const tabItems = [
@@ -103,6 +160,7 @@ const App: React.FC = () => {
         <GenerateWorkspace
           currentTaskId={currentTaskId}
           generationJob={generationJob}
+          onOpenHistoryTask={handleOpenHistoryTask}
           onImagesSelected={setSelectedImages}
           onSettingsSaved={handleSettingsSaved}
           onSubmit={handleGenerationSubmit}
@@ -122,6 +180,16 @@ const App: React.FC = () => {
       key: 'storyboard',
       label: 'Storyboard',
       children: <StoryboardWorkspace apiKey={settings.apiKey} model={settings.model} />
+    },
+    {
+      key: 'history',
+      label: 'History',
+      children: (
+        <HistoryWorkspace
+          recentJobs={recentJobs}
+          selectedTaskId={selectedHistoryTaskId}
+        />
+      )
     }
   ];
 

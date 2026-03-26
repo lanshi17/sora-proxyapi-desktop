@@ -25,6 +25,7 @@ describe('App Shell', () => {
     expect(screen.getByRole('tab', { name: /generate/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /iterate/i })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: /storyboard/i })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: /history/i })).toBeInTheDocument();
   });
 
   it('shows an iterate workspace with video selection and remix form', () => {
@@ -43,5 +44,14 @@ describe('App Shell', () => {
 
     const storyboardPanel = screen.getByRole('tabpanel', { name: /storyboard/i });
     expect(within(storyboardPanel).getByRole('heading', { name: 'Storyboard' })).toBeInTheDocument();
+  });
+
+  it('shows a history workspace for replay and download', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('tab', { name: /history/i }));
+
+    const historyPanel = screen.getByRole('tabpanel', { name: /history/i });
+    expect(within(historyPanel).getByRole('heading', { name: 'History' })).toBeInTheDocument();
+    expect(within(historyPanel).getByText(/reopen completed videos/i)).toBeInTheDocument();
   });
 });

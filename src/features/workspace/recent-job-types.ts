@@ -4,4 +4,7 @@ export interface RecentJob {
   model: string;
   status: string;
   createdAt: number;
+  updatedAt: number;
+  videoUrl: string | null;
+  error?: string | null;
 }

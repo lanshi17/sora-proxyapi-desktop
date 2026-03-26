@@ -1,6 +1,5 @@
 import type { GenerationParams } from './generation-schema';
 import type { LinxiTaskMetadata, LinxiCreateResponse } from './linxi-types';
-import { isTauri } from '@tauri-apps/api/core';
 
 export interface CreateLinxiVideoParams {
   images: string[];
@@ -21,7 +20,9 @@ const LINXI_CREATE_ENDPOINT = 'https://linxi.chat/v1/videos';
 export async function createLinxiVideoWithFiles(params: CreateLinxiVideoWithFilesParams): Promise<LinxiTaskMetadata> {
   const { files, generationParams, apiKey, model } = params;
 
-  const isNodeEnvironment = typeof process !== 'undefined' && process.versions?.node !== undefined;
+  const isNodeEnvironment =
+    typeof process !== 'undefined' &&
+    process.versions?.node !== undefined;
 
   if (isNodeEnvironment) {
     const FormData = (await import('form-data')).default;
@@ -117,7 +118,11 @@ export async function createLinxiVideoWithFiles(params: CreateLinxiVideoWithFile
   for (const file of files) {
     if (file instanceof File) {
       formData.append('input_reference', file);
+      continue;
     }
+
+    const tauriFile = await readTauriPathAsFile(file.path, file.name);
+    formData.append('input_reference', tauriFile);
   }
 
   formData.append('model', model);
@@ -166,25 +171,55 @@ export async function createLinxiVideoWithFiles(params: CreateLinxiVideoWithFile
     seconds: data.seconds,
     size: data.size
   };
+}
+
+async function readTauriPathAsFile(path: string, name: string): Promise<File> {
+  const { isTauri } = await import('@tauri-apps/api/core');
+
+  if (!isTauri()) {
+    throw new Error('File object required in browser mode. Ensure images are selected via file input.');
+  }
+
+  const { readFile } = await import('@tauri-apps/plugin-fs');
+  const bytes = await readFile(path);
+
+  return new File([bytes], name, {
+    type: getMimeType(name)
+  });
+}
+
+function getMimeType(fileName: string): string {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+
+  switch (extension) {
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'webp':
+      return 'image/webp';
+    case 'gif':
+      return 'image/gif';
+    default:
+      return 'application/octet-stream';
+  }
 }
 
 export async function createLinxiVideo(params: CreateLinxiVideoParams): Promise<LinxiTaskMetadata> {
   const { images, generationParams, apiKey, model } = params;
 
   const formData = new FormData();
-  
-  for (const url of images) {
-    const blob = await fetchImageWithCORS(url);
-    const filename = getFilenameFromUrl(url);
-    const file = new File([blob], filename, { type: blob.type || 'image/jpeg' });
-    formData.append('input_reference', file);
+
+  for (const imageUrl of images) {
+    formData.append('input_reference', normalizePublicImageUrl(imageUrl));
   }
-  
+
   formData.append('model', model);
   formData.append('prompt', generationParams.prompt);
   formData.append('seconds', String(generationParams.seconds));
   formData.append('size', generationParams.size);
-  
+
   if (model.endsWith('-all')) {
     if (generationParams.watermark !== undefined) {
       formData.append('watermark', String(generationParams.watermark));
@@ -228,33 +263,20 @@ export async function createLinxiVideo(params: CreateLinxiVideoParams): Promise<
   };
 }
 
-async function fetchImageWithCORS(url: string): Promise<Blob> {
-  if (isTauri()) {
-    const { fetch: tauriFetch } = await import('@tauri-apps/plugin-http');
-    const response = await tauriFetch(url, {
-      method: 'GET'
-    });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image from ${url}: ${response.status}`);
-    }
-    return await response.blob();
-  } else {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch image from ${url}: ${response.status}`);
-    }
-    return await response.blob();
+function normalizePublicImageUrl(imageUrl: string): string {
+  const normalized = imageUrl.trim();
+  if (normalized.length === 0) {
+    throw new Error('Image URL cannot be empty');
   }
-}
 
-function getFilenameFromUrl(url: string): string {
   try {
-    const urlObj = new URL(url);
-    const pathname = urlObj.pathname;
-    const filename = pathname.split('/').pop();
-    return filename || 'image.jpg';
+    const parsed = new URL(normalized);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error(`Invalid image URL protocol: ${normalized}`);
+    }
+    return parsed.toString();
   } catch {
-    return 'image.jpg';
+    throw new Error(`Invalid image URL: ${imageUrl}`);
   }
 }
 

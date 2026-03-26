@@ -6,3 +6,22 @@
 2026-03-20: Added browser-safe image-picker fallback, reactive settings usage, and a lightweight Recent Jobs surface so local development and session-level workflow visibility are stable. Current state: the app works in both Tauri runtime and plain browser dev, saved settings apply without restart, recent jobs appear in Generate mode, and the redesign is complete through Task 9.
 2026-03-21: Expanded model catalog and implemented remix client based on OpenAPI analysis so Iterate mode is unblocked. Current state: added Grok (grok-video-3), Luma (ray-v1, ray-v2), Kling (kling-v1, kling-v1-6, kling-v2, kling-v2-6), and Runway (gen4_turbo, gen3a_turbo) models with provider-specific capabilities; created linxi-remix-client.ts for POST /v1/videos/{id}/remix endpoint; all 66 tests pass.
 8: 2026-03-22: Implemented VideoPreview component with dual-mode video download (Tauri save dialog / browser download) using test-driven development. Current state: created src/features/video/ with VideoPreview.tsx (React component), video-download.ts (platform-aware utility), and video-preview.test.tsx (2 passing tests); all 83 tests pass; build verified clean.
+2026-03-24: Fixed Generate-mode CORS failure by changing `/v1/videos` payload assembly to send uploaded public URLs directly as `input_reference` instead of re-fetching remote images in the browser. Current state: `createLinxiVideo` now validates and forwards `http/https` URLs, submission errors are surfaced via UI state instead of uncaught promise rejections, unit workflow coverage was updated, and a favicon asset/link was added to eliminate the local `favicon.ico` 404 noise.
+2026-03-24: Removed Generate-mode image-bed dependency and switched to direct local-file submission so workflow no longer uploads to `img.linxi.icu` before create. Current state: `App.tsx` now calls `createLinxiVideoWithFiles` with local file/path references, `linxi-create-client.ts` keeps Node multipart submit behavior for filesystem-path payloads, and unit coverage was updated to assert direct file submission instead of upload-client usage.
+2026-03-24: Fixed video download button failure for cross-origin result URLs by replacing browser `fetch/blob` download flow with direct-link download and moving Tauri downloads to `@tauri-apps/plugin-http` + save dialog write path. Current state: browser dev mode no longer fails on CORS during click-to-download, Tauri mode saves via native HTTP client and filesystem write, `VideoPreview` Antd deprecation warnings were removed, and download behavior is covered by new unit tests.
+2026-03-24: Added persistent History workspace for repeat playback/download of completed videos and wired live status/videoUrl back into recent jobs. Current state: `App.tsx` now persists recent jobs via `recent-jobs-store`, updates history records when polling transitions to completed/failed states, a new `History` tab renders saved jobs with `VideoPreview` replay/download actions, and unit tests cover workflow + store compatibility for legacy records.
+2026-03-24: Added quick-open action from Generate session history into the History workspace so users can jump directly to replay/download for a specific task. Current state: each session history row now shows `Open in History` when the job has a playable `videoUrl`, App routes to `History` and preselects that task, and workflow tests verify the jump and selected video preview behavior.
+
+## 2026-03-24 20:47 — VideoPreview UX 优化
+**改动内容：**
+- VideoPreview 重构为深色主题播放器，视觉更沉浸
+- 加载状态：视频加载时显示旋转加载动画
+- 播放错误：显示错误提示 + 重试按钮
+- 下载失败：区分「浏览器 CORS 阻止」和「通用错误」两种文案
+- 新增「Open in Browser」按钮作为备用下载方式
+- GenerateWorkspace 统一为 Antd 风格，移除混用的裸 Tailwind class
+- Session History 使用省略号处理长文本，列表项有分隔线
+- 更新相关单元测试
+
+**验证：** npm test — 7 passed ✅ | npm run build ✅
+2026-03-24: Changed video preview/download flow to pre-cache remote outputs into system temp (`$TEMP/linxi-video-cache`) before playback and save, so Save Video can use local file copy instead of a second network download. Current state: `VideoPreview` resolves cache-first source via `resolveVideoSource`, `downloadVideo` supports local-path copy in Tauri mode, and cache/download/preview behavior is covered by updated unit tests.

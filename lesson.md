@@ -60,3 +60,58 @@
 - Actual cause: `tests/unit/app-workflow.test.tsx` only proved `task-123` existed somewhere on the page, but that same id appeared in both `Current Task & Result` and `Recent Jobs`, so the test did not prove the new surface specifically.
 - Fix: Added `data-testid="recent-jobs"` to the Recent Jobs section and updated the workflow test to use `within(recentJobsSection)` and assert the task id and prompt inside that section.
 - Takeaway: When new UI duplicates existing text, tests must scope assertions to the intended region instead of relying on global text matches.
+
+2026-03-24 - Browser CORS regression in Generate flow
+- Symptom: After upload succeeded and returned a public `img.linxi.icu` URL, generation failed in browser dev with CORS errors and `TypeError: Failed to fetch`, followed by unhandled promise noise in console.
+- Suspected cause: The upload endpoint or token was invalid.
+- Actual cause: `createLinxiVideo` was re-fetching uploaded URLs in the browser to convert them into `File` objects before calling `/v1/videos`; that second fetch hit an origin that does not allow `http://localhost:5174` CORS, so the request failed before create API submission.
+- Fix: Removed second-stage image fetch in `createLinxiVideo`, appended uploaded `http/https` URLs directly as `input_reference`, added URL validation, and wrapped `handleGenerationSubmit` in `try/catch` so API/client errors surface through `submissionError` instead of uncaught promise rejections.
+- Takeaway: Once a public asset URL is obtained, avoid browser-side relay fetches unless the remote origin explicitly supports CORS; forward URL references directly to the backend contract when allowed.
+
+2026-03-24 - Generate flow image-bed removal and test harness mismatch
+- Symptom: After user required "no image bed", Generate flow still hit `img.linxi.icu` and console showed upload responses before create errors.
+- Suspected cause: Residual upload call sites might still exist outside the obvious workflow.
+- Actual cause: `App.tsx` still hardcoded upload endpoint/token and always called `uploadImages` before create; also, the first round of `createLinxiVideoWithFiles` unit tests accidentally triggered real network calls because Node-only branch detection (`process.versions.node`) is also true under Vitest/jsdom.
+- Fix: Rewired Generate submit path to call `createLinxiVideoWithFiles` directly with local file/path inputs, removed upload-client usage from that flow, and rewrote `linxi-create-client` unit tests to mock Node `form-data` + `fs.createReadStream` branch explicitly instead of relying on browser fetch mocks.
+- Takeaway: In hybrid test environments, `process`-based runtime checks can route code into Node branches even with jsdom; isolate tests by mocking the exact transport branch (Node submit vs browser fetch) to avoid unintended real API traffic.
+
+2026-03-24 - Video download CORS failure in browser mode
+- Symptom: Clicking `Download Video` failed consistently in local browser dev, with console errors showing CORS blocks and failed fetch for cross-origin `.mp4` URLs.
+- Suspected cause: Remote storage URL or task status payload was malformed.
+- Actual cause: `video-download.ts` used `fetch(videoUrl)` + `blob()` for both browser and Tauri paths. In browser dev this requires CORS on the video origin, so download failed before any save action.
+- Fix: Changed browser mode to direct anchor-link download (no JS fetch), changed Tauri mode to use `@tauri-apps/plugin-http` for binary GET and `@tauri-apps/plugin-fs` write after save dialog selection, and added dedicated `video-download` unit coverage for browser/Tauri success and failure branches.
+- Takeaway: For cross-origin media downloads, browser-side `fetch/blob` is fragile unless the media origin explicitly allows CORS; use navigation-style downloads in browser and native HTTP clients in desktop runtime.
+
+2026-03-24 - History replay gap after generation completion
+- Symptom: Users could preview/download only the current completed run, but historical jobs in session view could not reliably replay or download again.
+- Suspected cause: Missing history page UI.
+- Actual cause: Recent jobs only stored task metadata and initial status; there was no persistent record synchronization from polling status/video URL updates, so completed playback targets were not guaranteed to exist for past jobs.
+- Fix: Introduced persistent `recent-jobs-store`, expanded `RecentJob` with `updatedAt/videoUrl/error`, synchronized poll results into history in `App.tsx`, and added a dedicated `HistoryWorkspace` tab that lists jobs and reuses `VideoPreview` for repeated play/download.
+- Takeaway: Historical media replay needs both UI and durable data plumbing; recording only task id/prompt at submit time is insufficient for post-completion actions.
+
+2026-03-24 - Session-to-history quick navigation usability gap
+- Symptom: Even after adding History replay, users still needed manual tab switching and visual lookup to locate the target task.
+- Suspected cause: History sorting/select logic might be wrong.
+- Actual cause: Generate session list had no direct affordance to open a specific job in History context.
+- Fix: Added `Open in History` action per session row (only for playable jobs), wired `App.tsx` to switch tab and pass selected task id into `HistoryWorkspace`, and updated workflow tests to assert direct jump + selected preview.
+- Takeaway: Feature completeness includes navigation ergonomics; replay/download flows should preserve task context across pages.
+
+## 2026-03-24 — VideoPreview 错误提示分层
+
+**问题：** 之前所有下载失败都只显示 "Failed to download video"，用户无法判断是 CORS 限制还是网络问题还是 Tauri 文件写入失败。
+
+**方案：** 在 handleDownload 中对错误信息做字符串匹配分类：
+- 包含 CORS/fetch/net::ERR → `BROWSER_CORS` → 显示"浏览器安全策略阻止"提示
+- 其他未知错误 → `GENERIC` → 显示"检查网络连接"提示
+- 用户取消（null 返回）→ 静默返回不弹提示
+
+**教训：** 错误提示要分层次、可操作，让用户知道是什么导致的、怎么解决，而不是只说"出错了"。
+
+**另一个问题：** GenerateWorkspace 混用 Antd (`<Card>`, `<Alert>`) 和裸 Tailwind (`className="flex flex-col gap-6"`)，视觉不统一。整个应用已统一为 Antd 风格。
+
+2026-03-24 - Video preview/download network dependency regression
+- Symptom: Users hit "Download failed / Check your network connection" while previewing or saving completed videos, even after job completion.
+- Suspected cause: Save action itself was unstable.
+- Actual cause: Both preview (`<video src={remoteUrl}>`) and save (`plugin-http` GET on click) depended on the remote URL being reachable at interaction time, so transient network/CORS/storage-origin failures caused repeated user-facing failures.
+- Fix: Added `video-cache.ts` to pre-download remote videos into `$TEMP/linxi-video-cache/video-{taskId}.mp4` in Tauri mode, switched `VideoPreview` to use cache-resolved local source when available, and updated `downloadVideo` to copy local cached files directly to user-selected destination.
+- Takeaway: For desktop UX, playback and download should not re-depend on remote availability after a result URL is obtained; cache to local temp first, then operate on local files for stability.

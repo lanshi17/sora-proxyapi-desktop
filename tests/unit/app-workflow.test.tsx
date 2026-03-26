@@ -1,9 +1,9 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from '../../src/app/App';
+import type { GenerationParams } from '../../src/features/video-generation/generation-schema';
 
-const mockUploadImages = vi.fn();
-const mockCreateLinxiVideo = vi.fn();
+const mockCreateLinxiVideoWithFiles = vi.fn();
 const mockUseGenerationJob = vi.fn();
 const mockLoadSettings = vi.fn();
 
@@ -27,7 +27,7 @@ vi.mock('../../src/features/config/SettingsForm', () => ({
 }));
 
 vi.mock('../../src/features/uploads/ImagePicker', () => ({
-  ImagePicker: ({ onImagesSelected }: { onImagesSelected: (images: Array<{ id: string; path: string; name: string; previewUrl: string }>) => void }) => (
+  ImagePicker: ({ onImagesSelected }: { onImagesSelected: (images: Array<{ id: string; path: string; name: string; previewUrl: string; file?: File }>) => void }) => (
     <button
       type="button"
       onClick={() =>
@@ -47,15 +47,14 @@ vi.mock('../../src/features/uploads/ImagePicker', () => ({
 }));
 
 vi.mock('../../src/features/video-generation/GenerationForm', () => ({
-  GenerationForm: ({ onSubmit }: { onSubmit: (params: { prompt: string; orientation: 'landscape' | 'portrait'; size: 'small' | 'large'; duration: 10 | 15 | 25; watermark: boolean; private: boolean }) => void }) => (
+  GenerationForm: ({ onSubmit }: { onSubmit: (params: GenerationParams) => void }) => (
     <button
       type="button"
       onClick={() =>
         onSubmit({
           prompt: 'A cinematic waterfall shot',
-          orientation: 'landscape',
-          size: 'large',
-          duration: 15,
+          size: '1280x720',
+          seconds: 8,
           watermark: false,
           private: false
         })
@@ -72,12 +71,8 @@ vi.mock('../../src/features/config/settings-store', () => ({
   }
 }));
 
-vi.mock('../../src/features/uploads/upload-client', () => ({
-  uploadImages: (...args: unknown[]) => mockUploadImages(...args)
-}));
-
 vi.mock('../../src/features/video-generation/linxi-create-client', () => ({
-  createLinxiVideo: (...args: unknown[]) => mockCreateLinxiVideo(...args)
+  createLinxiVideoWithFiles: (...args: unknown[]) => mockCreateLinxiVideoWithFiles(...args)
 }));
 
 vi.mock('../../src/features/video-generation/useGenerationJob', () => ({
@@ -86,23 +81,16 @@ vi.mock('../../src/features/video-generation/useGenerationJob', () => ({
 
 describe('App workflow', () => {
   beforeEach(() => {
+    localStorage.clear();
     mockLoadSettings.mockReset();
-    mockUploadImages.mockReset();
-    mockCreateLinxiVideo.mockReset();
+    mockCreateLinxiVideoWithFiles.mockReset();
     mockUseGenerationJob.mockReset();
 
     mockLoadSettings.mockReturnValue({
       apiKey: 'linxi-api-key',
       model: 'sora-turbo'
     });
-    mockUploadImages.mockResolvedValue([
-      {
-        originalPath: '/tmp/example.png',
-        originalName: 'example.png',
-        publicUrl: 'https://png.cm/uploads/example.png'
-      }
-    ]);
-    mockCreateLinxiVideo.mockResolvedValue({
+    mockCreateLinxiVideoWithFiles.mockResolvedValue({
       taskId: 'task-123',
       status: 'pending'
     });
@@ -129,7 +117,7 @@ describe('App workflow', () => {
   it('shows polished empty states before generation starts', () => {
     render(<App />);
 
-    expect(screen.getByText(/no active generation yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/no active generation/i)).toBeInTheDocument();
     expect(screen.getByText(/recent jobs in this session/i)).toBeInTheDocument();
   });
 
@@ -146,37 +134,27 @@ describe('App workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
 
     expect(screen.getByRole('alert')).toHaveTextContent('Select at least one image before generating.');
-    expect(mockUploadImages).not.toHaveBeenCalled();
-    expect(mockCreateLinxiVideo).not.toHaveBeenCalled();
+    expect(mockCreateLinxiVideoWithFiles).not.toHaveBeenCalled();
   });
 
-  it('uploads selected images and creates a linxi job', async () => {
+  it('submits selected local files directly to linxi create endpoint', async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Pick Mock Images' }));
     fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
 
     await waitFor(() => {
-      expect(mockUploadImages).toHaveBeenCalledWith({
-        images: [
+      expect(mockCreateLinxiVideoWithFiles).toHaveBeenCalledWith({
+        files: [
           {
             path: '/tmp/example.png',
             name: 'example.png'
           }
         ],
-        endpoint: 'https://img.linxi.icu/api/index.php',
-        token: '1c17b11693cb5ec63859b091c5b9c1b2'
-      });
-    });
-
-    await waitFor(() => {
-      expect(mockCreateLinxiVideo).toHaveBeenCalledWith({
-        images: ['https://png.cm/uploads/example.png'],
         generationParams: {
           prompt: 'A cinematic waterfall shot',
-          orientation: 'landscape',
-          size: 'large',
-          duration: 15,
+          size: '1280x720',
+          seconds: 8,
           watermark: false,
           private: false
         },
@@ -188,7 +166,7 @@ describe('App workflow', () => {
     expect(screen.getAllByText('task-123').length).toBeGreaterThan(0);
   });
 
-  it('uses updated saved settings for upload and generation without restart', async () => {
+  it('uses updated saved settings for file-based generation without restart', async () => {
     render(<App />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply Updated Settings' }));
@@ -196,26 +174,17 @@ describe('App workflow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
 
     await waitFor(() => {
-      expect(mockUploadImages).toHaveBeenCalledWith({
-        images: [
+      expect(mockCreateLinxiVideoWithFiles).toHaveBeenCalledWith({
+        files: [
           {
             path: '/tmp/example.png',
             name: 'example.png'
           }
         ],
-        endpoint: 'https://img.linxi.icu/api/index.php',
-        token: '1c17b11693cb5ec63859b091c5b9c1b2'
-      });
-    });
-
-    await waitFor(() => {
-      expect(mockCreateLinxiVideo).toHaveBeenCalledWith({
-        images: ['https://png.cm/uploads/example.png'],
         generationParams: {
           prompt: 'A cinematic waterfall shot',
-          orientation: 'landscape',
-          size: 'large',
-          duration: 15,
+          size: '1280x720',
+          seconds: 8,
           watermark: false,
           private: false
         },
@@ -237,6 +206,19 @@ describe('App workflow', () => {
     expect(within(recentJobsSection).getByText(/a cinematic waterfall shot/i)).toBeInTheDocument();
   });
 
+  it('surfaces generation errors instead of leaving rejected promises unhandled', async () => {
+    mockCreateLinxiVideoWithFiles.mockRejectedValueOnce(new Error('Linxi create request failed: 401 Unauthorized'));
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Mock Images' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Linxi create request failed: 401 Unauthorized');
+    });
+  });
+
   it('renders completed video state from the polling hook', async () => {
     mockUseGenerationJob.mockReturnValue({
       state: 'completed',
@@ -253,10 +235,58 @@ describe('App workflow', () => {
     await waitFor(() => {
       expect(screen.getByText('completed')).toBeInTheDocument();
     });
-    expect(screen.getByRole('link', { name: 'Open generated video' })).toHaveAttribute(
-      'href',
-      'https://cdn.linxi.chat/video.mp4'
-    );
-});
 
+    expect(screen.getByTestId('video-player')).toHaveAttribute('src', 'https://cdn.linxi.chat/video.mp4');
+  });
+
+  it('allows replay and download from history page after completion', async () => {
+    mockUseGenerationJob.mockReturnValue({
+      state: 'completed',
+      status: 'completed',
+      videoUrl: 'https://cdn.linxi.chat/history-video.mp4',
+      error: null
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Mock Images' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('completed')).toBeInTheDocument();
+    }, { timeout: 10000 });
+
+    fireEvent.click(screen.getByRole('tab', { name: /history/i }));
+
+    const historyPanel = await screen.findByRole('tabpanel', { name: /history/i });
+    expect(within(historyPanel).getByText('task-123')).toBeInTheDocument();
+    expect(within(historyPanel).getByTestId('video-player')).toHaveAttribute('src', 'https://cdn.linxi.chat/history-video.mp4');
+    expect(within(historyPanel).getByRole('button', { name: /save video/i })).toBeInTheDocument();
+  }, 15000);
+
+  it('opens selected task in history when clicking Open from session history', async () => {
+    mockUseGenerationJob.mockReturnValue({
+      state: 'completed',
+      status: 'completed',
+      videoUrl: 'https://cdn.linxi.chat/selected-from-open.mp4',
+      error: null
+    });
+
+    render(<App />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pick Mock Images' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Generation' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('completed')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in History' }));
+
+    const historyPanel = await screen.findByRole('tabpanel', { name: /history/i });
+    expect(within(historyPanel).getByTestId('video-player')).toHaveAttribute(
+      'src',
+      'https://cdn.linxi.chat/selected-from-open.mp4'
+    );
+  }, 15000);
 });

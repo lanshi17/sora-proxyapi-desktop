@@ -1,1 +1,1 @@
-export type WorkspaceMode = 'generate' | 'iterate' | 'storyboard';
+export type WorkspaceMode = 'generate' | 'iterate' | 'storyboard' | 'history';
